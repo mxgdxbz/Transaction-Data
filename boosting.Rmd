@@ -1,0 +1,92 @@
+---
+title: "Boosting"
+author: "CHUHAN"
+date: "12/20/2018"
+output: html_document
+---
+
+```{r,include=FALSE}
+### Gradient Boosting
+library(gbm)
+set.seed(11)
+gbm_split <- initial_split(data.wide, prop = .7)
+gbm_train <- training(gbm_split)
+gbm_test  <- testing(gbm_split)
+```
+
+###Perform a grid search which iterates over every combination of hyperparameter values and allows us to assess which combination tends to perform well.
+```{r,include=FALSE}
+# create hyperparameter grid
+hyper_grid <- expand.grid(
+  shrinkage = c(.01, .05, .1),
+  interaction.depth = c(1, 3, 5),
+  n.minobsinnode = c(5, 7, 10),
+  bag.fraction = c(0.7, .85, 1), 
+  optimal_trees = 0,               # a place to dump results
+  min_RMSE = 0                     # a place to dump results
+)
+# randomize data
+random_index <- sample(1:nrow(gbm_train), nrow(gbm_train))
+random_ames_train <- gbm_train[random_index, ]
+# grid search 
+for( i in 1:nrow(hyper_grid)) {
+  
+  # reproducibility
+  set.seed(123)
+  
+  # train model
+  gbm.tune <- gbm(
+    formula = purc.total~gender+age+occupation+city_category+stay_years+marital_status,
+    distribution = "gaussian",
+    data = random_ames_train,
+    n.trees = 5000,
+    interaction.depth = hyper_grid$interaction.depth[i],
+    shrinkage = hyper_grid$shrinkage[i],
+    n.minobsinnode = hyper_grid$n.minobsinnode[i],
+    bag.fraction = hyper_grid$bag.fraction[i],
+    train.fraction = .75,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE
+  )
+  
+  # add min training error and trees to grid
+  hyper_grid$optimal_trees[i] <- which.min(gbm.tune$valid.error)
+  hyper_grid$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+}
+
+hyper_grid %>% 
+  dplyr::arrange(min_RMSE) %>%
+  head(10)
+
+# train a cross validated model using parameters specified above
+gbm.fit.final <- gbm(
+  purc.total~gender+age+occupation+city_category+stay_years+marital_status,
+  data=gbm_test,
+  distribution = "gaussian",
+  n.trees = 500,
+  interaction.depth = 5, #ensemble a bunch of stumps
+  shrinkage = 0.05,
+  cv.folds = 5,
+  n.minobsinnode = 10,
+  bag.fraction=0.70,
+  n.cores = NULL, # will use all cores by default
+  verbose = FALSE
+  )  
+print(gbm.fit.final)
+summary(gbm.fit.final)
+
+par(mar = c(5, 8, 1, 1))
+summary(
+  gbm.fit.final, 
+  cBars = 10,
+  #method = relative.influence, 
+  method=permutation.test.gbm,
+  las = 2
+  )
+
+pred <- predict(gbm.fit.final, n.trees = gbm.fit.final$n.trees, gbm_test)
+
+# results
+caret::RMSE(pred, gbm_test$purc.total)
+```
+
